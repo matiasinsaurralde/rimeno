@@ -1,6 +1,6 @@
 module github.com/matiasinsaurralde/rimeno/otel
 
-go 1.23
+go 1.25
 
 require (
 	github.com/matiasinsaurralde/rimeno v0.0.0
