@@ -27,6 +27,9 @@ func (e *ValidationError) Error() string {
 // required, arrays and items, string/number/integer/boolean types, enums, and
 // numeric minimum/maximum. Unknown keywords are ignored.
 func Validate(schemaJSON json.RawMessage, data []byte) error {
+	if len(schemaJSON) == 0 {
+		return &ValidationError{Msg: "empty schema"}
+	}
 	var sch map[string]any
 	if err := json.Unmarshal(schemaJSON, &sch); err != nil {
 		return &ValidationError{Msg: "invalid schema: " + err.Error()}

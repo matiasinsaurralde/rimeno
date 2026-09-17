@@ -355,8 +355,17 @@ func buildRepairPrompt(err error) string {
 
 func (a *Agent) decodeOutput(text string) (any, error) {
 	raw := []byte(strings.TrimSpace(text))
-	if err := a.output.validate(raw); err != nil {
-		return nil, &OutputValidationError{Err: err, Raw: text}
+	// validate/decode are unexported hooks that only in-package constructors
+	// (OutputOf, OutputFromSchema) populate. Tolerate a hand-built OutputSpec that
+	// left them nil rather than panicking: nil validate means "no local check",
+	// nil decode means "surface the raw bytes".
+	if a.output.validate != nil {
+		if err := a.output.validate(raw); err != nil {
+			return nil, &OutputValidationError{Err: err, Raw: text}
+		}
+	}
+	if a.output.decode == nil {
+		return json.RawMessage(append([]byte(nil), raw...)), nil
 	}
 	out, err := a.output.decode(raw)
 	if err != nil {

@@ -50,6 +50,56 @@ func OutputOf[T any]() *OutputSpec {
 	}
 }
 
+// OutputFromSchema configures an agent to return output conforming to a
+// hand-written JSON Schema, for callers who already have a schema (generated
+// from protobuf/OpenAPI, or hand-tuned with $ref/anyOf/enum descriptions) and do
+// not want to mirror it as a Go type. It is the [OutputSpec] analogue of
+// [RawTool].
+//
+// The schema is sent to the provider as response_format and validated locally
+// with [schema.Validate]; by default the model's final message is surfaced as
+// Result.Output as a [json.RawMessage] for the caller to decode. Pair with
+// Config.OutputRepairAttempts to have the model repair invalid output.
+//
+//	spec := rimeno.OutputFromSchema("decision", decisionSchema, rimeno.Lax())
+//	agent, _ := rimeno.New(rimeno.Config{Model: m, Output: spec, OutputRepairAttempts: 2})
+//	res, _ := agent.Run(ctx, task)
+//	raw := res.Output.(json.RawMessage) // decode with your own parser
+func OutputFromSchema(name string, sch json.RawMessage, opts ...OutputOption) *OutputSpec {
+	spec := &OutputSpec{
+		Name:   name,
+		Schema: sch,
+		Strict: true,
+		validate: func(b []byte) error {
+			return schema.Validate(sch, b)
+		},
+		// Default decode is a passthrough copy: the caller owns the concrete type.
+		decode: func(b []byte) (any, error) {
+			return json.RawMessage(append([]byte(nil), b...)), nil
+		},
+	}
+	for _, o := range opts {
+		o(spec)
+	}
+	return spec
+}
+
+// OutputOption configures an [OutputSpec] built by [OutputFromSchema].
+type OutputOption func(*OutputSpec)
+
+// Lax disables provider "strict" structured-output mode. Strict mode requires a
+// closed schema (every property required, additionalProperties:false); many real
+// schemas are not closed, and some providers reject them under strict — Lax is
+// the escape hatch.
+func Lax() OutputOption { return func(s *OutputSpec) { s.Strict = false } }
+
+// DecodeInto replaces the default json.RawMessage passthrough decoder, so
+// Result.Output can be a typed value while the schema stays raw. The bytes passed
+// to decode have already been validated against the schema.
+func DecodeInto(decode func([]byte) (any, error)) OutputOption {
+	return func(s *OutputSpec) { s.decode = decode }
+}
+
 func outputName[T any]() string {
 	t := reflect.TypeFor[T]()
 	for t.Kind() == reflect.Pointer {
