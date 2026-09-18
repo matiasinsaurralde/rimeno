@@ -5,8 +5,8 @@
 // Usage:
 //
 //	rimeno demo
-//	RIMENO_API_KEY=... RIMENO_MODEL=gpt-4o-mini rimeno run -p "what is 21+21?" -demo-tools -trace
-//	rimeno workflow -p "the Go programming language"
+//	OPENAI_API_KEY=... rimeno run -model gpt-4o-mini -p "what is 21+21?" -demo-tools -trace
+//	rimeno workflow -model gpt-4o-mini -p "the Go programming language"
 package main
 
 import (
@@ -69,14 +69,14 @@ Commands:
   workflow  -p TEXT   Run a demo multi-agent workflow.
   serve               Serve rimeno over JSON-RPC 2.0 on stdio (embed from any host).
 
-run/workflow read credentials from flags or env:
-  -model / RIMENO_MODEL / OPENAI_MODEL
-  -base-url / RIMENO_BASE_URL / OPENAI_BASE_URL   (default `+openai.DefaultBaseURL+`)
-  -api-key via RIMENO_API_KEY / OPENAI_API_KEY
+run/workflow read credentials from flags and the environment:
+  -model                    model id (required)
+  -base-url / OPENAI_BASE_URL   API base URL (default `+openai.DefaultBaseURL+`)
+  OPENAI_API_KEY            API key
 
 Examples:
   rimeno demo
-  RIMENO_MODEL=gpt-4o-mini rimeno run -p "what is 21+21?" -demo-tools -trace
+  OPENAI_API_KEY=... rimeno run -model gpt-4o-mini -p "what is 21+21?" -demo-tools -trace
 `)
 }
 
@@ -118,8 +118,8 @@ func cmdRun(args []string) error {
 	fs := flag.NewFlagSet("run", flag.ExitOnError)
 	prompt := fs.String("p", "", "prompt text")
 	file := fs.String("f", "", "read prompt from file")
-	model := fs.String("model", "", "model id (or RIMENO_MODEL/OPENAI_MODEL)")
-	baseURL := fs.String("base-url", "", "API base URL (or RIMENO_BASE_URL/OPENAI_BASE_URL)")
+	model := fs.String("model", "", "model id (required)")
+	baseURL := fs.String("base-url", "", "API base URL (or OPENAI_BASE_URL)")
 	system := fs.String("system", "", "system instructions")
 	demoTools := fs.Bool("demo-tools", false, "register built-in demo tools (add, now)")
 	trace := fs.Bool("trace", false, "print trace summary")
@@ -136,7 +136,7 @@ func cmdRun(args []string) error {
 		return err
 	}
 
-	m, err := modelFromEnv(*model, *baseURL)
+	m, err := modelFromFlags(*model, *baseURL)
 	if err != nil {
 		return err
 	}
@@ -209,14 +209,14 @@ func runEventHandler(verbose, stream bool) func(rimeno.Event) {
 func cmdWorkflow(args []string) error {
 	fs := flag.NewFlagSet("workflow", flag.ExitOnError)
 	prompt := fs.String("p", "the Go programming language", "workflow input")
-	model := fs.String("model", "", "model id (or RIMENO_MODEL/OPENAI_MODEL)")
-	baseURL := fs.String("base-url", "", "API base URL")
+	model := fs.String("model", "", "model id (required for a real run)")
+	baseURL := fs.String("base-url", "", "API base URL (or OPENAI_BASE_URL)")
 	_ = fs.Parse(args)
 
 	// Use a real model if credentials are present; otherwise a fake for offline demo.
 	var mk func(name string) *rimeno.Agent
-	if hasCredentials() {
-		m, err := modelFromEnv(*model, *baseURL)
+	if hasCredentials(*model) {
+		m, err := modelFromFlags(*model, *baseURL)
 		if err != nil {
 			return err
 		}
@@ -265,8 +265,8 @@ func cmdWorkflow(args []string) error {
 // OpenAI-compatible model per session from flags/env.
 func cmdServe(args []string) error {
 	fs := flag.NewFlagSet("serve", flag.ExitOnError)
-	model := fs.String("model", "", "model id (or RIMENO_MODEL/OPENAI_MODEL)")
-	baseURL := fs.String("base-url", "", "API base URL")
+	model := fs.String("model", "", "model id (required unless -demo)")
+	baseURL := fs.String("base-url", "", "API base URL (or OPENAI_BASE_URL)")
 	system := fs.String("system", "", "default system instructions")
 	demoTools := fs.Bool("demo-tools", false, "register built-in demo tools (add, now)")
 	demo := fs.Bool("demo", false, "use a fake echo model (no API key needed)")
@@ -277,7 +277,7 @@ func cmdServe(args []string) error {
 		if *demo {
 			m = echoModel()
 		} else {
-			rm, err := modelFromEnv(*model, *baseURL)
+			rm, err := modelFromFlags(*model, *baseURL)
 			if err != nil {
 				return rimeno.Config{}, err
 			}
@@ -323,39 +323,25 @@ func echoModel() rimeno.Model {
 
 // --- helpers ----------------------------------------------------------------
 
-func modelFromEnv(model, baseURL string) (rimeno.Model, error) {
+func modelFromFlags(model, baseURL string) (rimeno.Model, error) {
 	if model == "" {
-		model = firstEnv("RIMENO_MODEL", "OPENAI_MODEL")
-	}
-	if model == "" {
-		return nil, fmt.Errorf("no model set (use -model or RIMENO_MODEL)")
+		return nil, fmt.Errorf("no model set (use -model)")
 	}
 	if baseURL == "" {
-		baseURL = firstEnv("RIMENO_BASE_URL", "OPENAI_BASE_URL")
+		baseURL = os.Getenv("OPENAI_BASE_URL")
 	}
 	if baseURL == "" {
 		baseURL = openai.DefaultBaseURL
 	}
-	apiKey := firstEnv("RIMENO_API_KEY", "OPENAI_API_KEY")
 	return openai.New(
 		openai.WithModel(model),
 		openai.WithBaseURL(baseURL),
-		openai.WithAPIKey(apiKey),
+		openai.WithAPIKey(os.Getenv("OPENAI_API_KEY")),
 	), nil
 }
 
-func hasCredentials() bool {
-	return firstEnv("RIMENO_MODEL", "OPENAI_MODEL") != "" &&
-		firstEnv("RIMENO_API_KEY", "OPENAI_API_KEY") != ""
-}
-
-func firstEnv(keys ...string) string {
-	for _, k := range keys {
-		if v := os.Getenv(k); v != "" {
-			return v
-		}
-	}
-	return ""
+func hasCredentials(model string) bool {
+	return model != "" && os.Getenv("OPENAI_API_KEY") != ""
 }
 
 func promptText(prompt, file string) (string, error) {

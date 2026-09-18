@@ -58,10 +58,7 @@ func TestResponsesThreading_Live(t *testing.T) {
 	if base == "" {
 		base = "https://openrouter.ai/api/v1"
 	}
-	modelID := os.Getenv("RIMENO_LIVE_MODEL")
-	if modelID == "" {
-		modelID = "moonshotai/kimi-k3"
-	}
+	const modelID = "moonshotai/kimi-k3"
 
 	// A tool loop the model cannot short-circuit: the three code words are only
 	// obtainable by calling the tool, so producing the final answer forces multiple
