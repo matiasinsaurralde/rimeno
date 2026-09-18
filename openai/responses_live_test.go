@@ -24,10 +24,7 @@ func TestResponses_Live(t *testing.T) {
 	if base == "" {
 		base = "https://openrouter.ai/api/v1"
 	}
-	model := os.Getenv("RIMENO_LIVE_MODEL")
-	if model == "" {
-		model = "moonshotai/kimi-k3"
-	}
+	const model = "moonshotai/kimi-k3"
 	c := openai.New(
 		openai.WithBaseURL(base),
 		openai.WithAPIKey(os.Getenv("OPENAI_API_KEY")),

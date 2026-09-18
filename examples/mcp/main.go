@@ -4,7 +4,8 @@
 // It needs two things: an MCP server command and an OpenAI-compatible model.
 //
 //	# Example: the reference filesystem server over npx, and an OpenAI model.
-//	RIMENO_API_KEY=sk-... RIMENO_MODEL=gpt-4o-mini \
+//	# Credentials come from OPENAI_API_KEY / OPENAI_BASE_URL (env or a .env file).
+//	OPENAI_API_KEY=sk-... \
 //	  go run ./examples/mcp -- npx -y @modelcontextprotocol/server-filesystem /tmp
 //
 // Everything after `--` is the MCP server command and its arguments.
@@ -18,11 +19,18 @@ import (
 	"time"
 
 	"github.com/matiasinsaurralde/rimeno"
+	"github.com/matiasinsaurralde/rimeno/dotenv"
 	"github.com/matiasinsaurralde/rimeno/mcp"
 	"github.com/matiasinsaurralde/rimeno/openai"
 )
 
+// modelID is hardcoded for the example; swap it for whatever your endpoint serves.
+const modelID = "gpt-4o-mini"
+
 func main() {
+	// Load .env for local dev (never overrides variables already set).
+	_, _ = dotenv.Load()
+
 	cmd, args := serverCommand()
 	if cmd == "" {
 		log.Fatal("usage: go run ./examples/mcp -- <mcp-server-command> [args...]")
@@ -56,9 +64,9 @@ func main() {
 
 	// 3. Hand them to an agent.
 	model := openai.New(
-		openai.WithBaseURL(env("RIMENO_BASE_URL", openai.DefaultBaseURL)),
-		openai.WithAPIKey(os.Getenv("RIMENO_API_KEY")),
-		openai.WithModel(env("RIMENO_MODEL", "gpt-4o-mini")),
+		openai.WithBaseURL(env("OPENAI_BASE_URL", openai.DefaultBaseURL)),
+		openai.WithAPIKey(os.Getenv("OPENAI_API_KEY")),
+		openai.WithModel(modelID),
 	)
 	agent, err := rimeno.New(rimeno.Config{
 		Model:        model,
@@ -69,7 +77,7 @@ func main() {
 		log.Fatal(err)
 	}
 
-	prompt := env("RIMENO_PROMPT", "What tools do you have, and what can they do?")
+	const prompt = "What tools do you have, and what can they do?"
 	res, err := agent.Run(ctx, prompt)
 	if err != nil {
 		log.Fatal(err)

@@ -14,7 +14,8 @@ import (
 // TestOutputFromSchema_Live drives OutputFromSchema end-to-end against a real
 // endpoint: it hands a hand-written JSON Schema straight to the provider as
 // response_format and asserts the model's answer validates and decodes. Skipped
-// unless RIMENO_LIVE=1 and OPENAI_API_KEY are set.
+// unless RIMENO_LIVE=1 and OPENAI_API_KEY are set, so a plain `go test` stays
+// offline and free even when an OPENAI_API_KEY happens to be in the environment.
 //
 //	RIMENO_LIVE=1 OPENAI_API_KEY=... OPENAI_BASE_URL=https://openrouter.ai/api/v1 \
 //	  go test -run TestOutputFromSchema_Live -v .
@@ -26,10 +27,7 @@ func TestOutputFromSchema_Live(t *testing.T) {
 	if base == "" {
 		base = "https://openrouter.ai/api/v1"
 	}
-	modelID := os.Getenv("RIMENO_LIVE_MODEL")
-	if modelID == "" {
-		modelID = "openai/gpt-4o-mini"
-	}
+	const modelID = "openai/gpt-4o-mini"
 
 	model := openai.New(
 		openai.WithBaseURL(base),
