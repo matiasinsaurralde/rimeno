@@ -32,8 +32,14 @@ type streamOptions struct {
 }
 
 type wireMessage struct {
-	Role       string         `json:"role"`
-	Content    string         `json:"content,omitempty"`
+	Role string `json:"role"`
+	// Content is sent even when empty (no omitempty): an assistant tool-call turn
+	// has empty text, and omitting the field makes some OpenRouter upstreams
+	// (e.g. Moonshot) normalize it to a content part with text=undefined and
+	// reject the whole request ("text content parts must carry a string text").
+	// A valid empty string avoids that; decoding is unaffected (omitempty is
+	// marshal-only).
+	Content    string         `json:"content"`
 	ToolCalls  []wireToolCall `json:"tool_calls,omitempty"`
 	ToolCallID string         `json:"tool_call_id,omitempty"`
 	Name       string         `json:"name,omitempty"`
