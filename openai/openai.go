@@ -10,7 +10,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math/rand/v2"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -26,6 +28,31 @@ type Price struct {
 	OutputPerMillion float64
 }
 
+// Backoff configures the retry schedule used by (*Client).do for retriable
+// responses (429, 5xx, network errors, truncated 2xx).
+//
+// With Jitter set, waits follow AWS-style "decorrelated jitter": each wait is
+// drawn uniformly from [Base, prev*3] and clamped to Cap, where prev is the
+// previous wait (seeded from Base). This spreads concurrent retries so callers
+// fanning out many requests to one endpoint do not retry in lockstep and
+// re-saturate it. With Jitter unset, waits follow a plain exponential schedule
+// (Base, Base*2, Base*4, ...) clamped to Cap.
+type Backoff struct {
+	Base       time.Duration // floor for the first retry wait
+	Cap        time.Duration // ceiling for any single wait
+	MaxRetries int           // retries after the initial attempt (total attempts = MaxRetries+1)
+	Jitter     bool          // use decorrelated jitter instead of plain exponential
+}
+
+// Default backoff parameters. Chosen for endpoints that saturate under high
+// concurrency: several jittered attempts spread over tens of seconds recover
+// where a few tight attempts do not.
+const (
+	defaultBackoffBase = 500 * time.Millisecond
+	defaultBackoffCap  = 30 * time.Second
+	defaultMaxRetries  = 4
+)
+
 // Client is an OpenAI-compatible rimeno.Model (and rimeno.StreamingModel).
 type Client struct {
 	baseURL      string
@@ -34,8 +61,8 @@ type Client struct {
 	org          string
 	headers      map[string]string
 	httpClient   *http.Client
-	maxRetries   int
-	backoff      time.Duration
+	backoff      Backoff
+	sem          chan struct{} // optional in-flight request cap; nil = unlimited
 	prices       map[string]Price
 	useResponses bool // speak /responses instead of /chat/completions
 }
@@ -69,8 +96,41 @@ func WithHeader(k, v string) Option {
 }
 
 // WithMaxRetries sets how many times to retry on 429/5xx and network errors
-// (default 2).
-func WithMaxRetries(n int) Option { return func(c *Client) { c.maxRetries = n } }
+// (default 4). It is a shorthand for setting only Backoff.MaxRetries; use
+// WithBackoff to tune the wait schedule as well.
+func WithMaxRetries(n int) Option { return func(c *Client) { c.backoff.MaxRetries = n } }
+
+// WithBackoff sets the retry schedule. Any zero-valued field is left at its
+// default (Base 500ms, Cap 30s, MaxRetries 4, Jitter on), so callers can
+// override only the fields they care about.
+func WithBackoff(b Backoff) Option {
+	return func(c *Client) {
+		if b.Base > 0 {
+			c.backoff.Base = b.Base
+		}
+		if b.Cap > 0 {
+			c.backoff.Cap = b.Cap
+		}
+		if b.MaxRetries > 0 {
+			c.backoff.MaxRetries = b.MaxRetries
+		}
+		c.backoff.Jitter = b.Jitter
+	}
+}
+
+// WithMaxConcurrency caps the number of requests this Client keeps in flight to
+// the endpoint at once, regardless of how many goroutines call Generate. A
+// request holds one slot for the whole of its retry sequence. k <= 0 disables
+// the cap (the default).
+func WithMaxConcurrency(k int) Option {
+	return func(c *Client) {
+		if k > 0 {
+			c.sem = make(chan struct{}, k)
+		} else {
+			c.sem = nil
+		}
+	}
+}
 
 // WithPricing registers per-million-token pricing for a model so Usage.CostUSD is
 // populated so traces can report cost.
@@ -89,8 +149,12 @@ func New(opts ...Option) *Client {
 	c := &Client{
 		baseURL:    DefaultBaseURL,
 		httpClient: &http.Client{Timeout: 120 * time.Second},
-		maxRetries: 2,
-		backoff:    300 * time.Millisecond,
+		backoff: Backoff{
+			Base:       defaultBackoffBase,
+			Cap:        defaultBackoffCap,
+			MaxRetries: defaultMaxRetries,
+			Jitter:     true,
+		},
 	}
 	for _, o := range opts {
 		o(c)
@@ -199,13 +263,30 @@ func (c *Client) buildChatRequest(req *rimeno.Request, stream bool) *chatRequest
 }
 
 func (c *Client) do(ctx context.Context, body []byte) ([]byte, error) {
+	// Hold one concurrency slot for the whole retry sequence, so a burst of
+	// callers never puts more than k requests in flight to the endpoint.
+	if c.sem != nil {
+		select {
+		case c.sem <- struct{}{}:
+			defer func() { <-c.sem }()
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}
+
 	var lastErr error
-	for attempt := 0; attempt <= c.maxRetries; attempt++ {
+	prev := c.backoff.Base // running wait, seeded for decorrelated jitter
+	// override, when > 0, is the wait to use before the next attempt (e.g. a
+	// 429's Retry-After hint) in place of the computed backoff.
+	var override time.Duration
+	for attempt := 0; attempt <= c.backoff.MaxRetries; attempt++ {
 		if attempt > 0 {
+			wait := c.nextWait(&prev, override)
+			override = 0
 			select {
 			case <-ctx.Done():
 				return nil, ctx.Err()
-			case <-time.After(c.backoff * time.Duration(1<<(attempt-1))):
+			case <-time.After(wait):
 			}
 		}
 		httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, c.endpoint(), bytes.NewReader(body))
@@ -238,11 +319,73 @@ func (c *Client) do(ctx context.Context, body []byte) ([]byte, error) {
 		apiErr := parseAPIError(resp.StatusCode, raw)
 		if resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode >= 500 {
 			lastErr = apiErr
+			if resp.StatusCode == http.StatusTooManyRequests {
+				// Honor the provider's own wait hint over our schedule when it
+				// gives one; clamped to Cap so a hostile/huge value can't stall us.
+				if d := parseRetryAfter(resp.Header.Get("Retry-After")); d > 0 {
+					if d > c.backoff.Cap {
+						d = c.backoff.Cap
+					}
+					override = d
+				}
+			}
 			continue
 		}
 		return nil, apiErr
 	}
 	return nil, lastErr
+}
+
+// nextWait returns the duration to sleep before the next retry, advancing prev.
+// A positive override (e.g. a Retry-After hint) wins. Otherwise the wait is
+// decorrelated jitter when enabled — random in [Base, prev*3], capped — or a
+// plain doubling of prev, capped.
+func (c *Client) nextWait(prev *time.Duration, override time.Duration) time.Duration {
+	if override > 0 {
+		return override
+	}
+	base, capD := c.backoff.Base, c.backoff.Cap
+	var wait time.Duration
+	if c.backoff.Jitter {
+		// random in [base, prev*3]
+		span := int64(*prev)*3 - int64(base) + 1
+		if span < 1 {
+			span = 1
+		}
+		wait = base + time.Duration(rand.Int64N(span))
+	} else if *prev <= base {
+		// first retry: floor at base, then double each subsequent retry.
+		wait = base
+	} else {
+		wait = *prev * 2
+	}
+	if capD > 0 && wait > capD {
+		wait = capD
+	}
+	*prev = wait
+	return wait
+}
+
+// parseRetryAfter parses an HTTP Retry-After header value, which is either a
+// non-negative number of seconds or an HTTP-date. It returns the delay, or 0 if
+// the value is absent, malformed, or in the past.
+func parseRetryAfter(v string) time.Duration {
+	v = strings.TrimSpace(v)
+	if v == "" {
+		return 0
+	}
+	if secs, err := strconv.Atoi(v); err == nil {
+		if secs < 0 {
+			return 0
+		}
+		return time.Duration(secs) * time.Second
+	}
+	if t, err := http.ParseTime(v); err == nil {
+		if d := time.Until(t); d > 0 {
+			return d
+		}
+	}
+	return 0
 }
 
 func (c *Client) setHeaders(r *http.Request) {

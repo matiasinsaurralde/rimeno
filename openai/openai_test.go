@@ -337,7 +337,7 @@ func TestDo_RetriesTruncatedBody(t *testing.T) {
 		_, _ = fmt.Fprint(w, `{"choices":[{"index":0,"message":{"role":"assistant","content":"recovered"},"finish_reason":"stop"}],"usage":{"total_tokens":3}}`)
 	}))
 	defer srv.Close()
-	c := openai.New(openai.WithBaseURL(srv.URL), openai.WithModel("m")) // default 2 retries
+	c := openai.New(openai.WithBaseURL(srv.URL), openai.WithModel("m")) // default retries
 	resp, err := c.Generate(context.Background(), &rimeno.Request{Messages: []rimeno.Message{rimeno.UserMessage("x")}})
 	if err != nil {
 		t.Fatalf("expected retry to recover, got %v", err)
