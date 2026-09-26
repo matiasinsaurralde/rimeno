@@ -352,6 +352,7 @@ func (c *Client) nextWait(prev *time.Duration, override time.Duration) time.Dura
 		if span < 1 {
 			span = 1
 		}
+		// #nosec G404 -- jitter spreads retry timing, not a security context; crypto/rand is unwarranted here
 		wait = base + time.Duration(rand.Int64N(span))
 	} else if *prev <= base {
 		// first retry: floor at base, then double each subsequent retry.
