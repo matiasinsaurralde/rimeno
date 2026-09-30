@@ -120,6 +120,7 @@ fmt.Println(s.Usage().TotalTokens)                // cumulative across turns
 | `rimeno` | agent, session, run loop, tools, budget, trace, compaction |
 | `rimeno/openai` | OpenAI-compatible provider (Chat Completions + Responses API, streaming) |
 | `rimeno/sandbox` | command execution — local, a persistent shell, or Docker |
+| `rimeno/memory` | durable, scoped memory: pluggable store, agent tools, compaction re-injection |
 | `rimeno/workflow` | a small DAG for orchestrating agents deterministically |
 | `rimeno/mcp` | Model Context Protocol client |
 | `rimeno/rpc` | JSON-RPC agent server |
