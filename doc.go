@@ -58,6 +58,8 @@
 //   - mcp — a Model Context Protocol client to consume external tool servers.
 //   - sandbox — a Provider/Sandbox seam for running commands in isolation, plus
 //     a run_command tool.
+//   - memory — durable, scoped agent memory: a pluggable store, agent-callable
+//     tools, and compaction re-injection so facts survive context compaction.
 //
 // Subagents and multi-agent workflows build on these primitives: [AgentTool]
 // turns an agent into a tool another agent can call (parallel subagents run as
