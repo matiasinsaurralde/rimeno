@@ -31,7 +31,7 @@ func NewFileStore(dir string) (Store, error) {
 	if dir == "" {
 		return nil, fmt.Errorf("memory: NewFileStore requires a directory")
 	}
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return nil, fmt.Errorf("memory: create store dir: %w", err)
 	}
 	return &fileStore{dir: dir, now: time.Now, cache: make(map[string]map[string]Record)}, nil
